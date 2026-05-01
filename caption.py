@@ -1,6 +1,7 @@
 """Caption generator for MilkLab cafe Instagram posts."""
 
 import os
+import re
 from dotenv import load_dotenv
 
 # Preferred order: try full flash first, then fall back to lite if rate-limited.
@@ -8,6 +9,117 @@ MODEL_CANDIDATES: tuple[str, ...] = (
 	"gemini-2.5-flash",
 	"gemini-2.5-flash-lite",
 )
+
+CAPTION_PREFIXES: tuple[str, ...] = (
+	"Cute:",
+	"Minimal:",
+	"Gen-Z:",
+)
+
+_PREFIX_PATTERNS: dict[str, re.Pattern[str]] = {
+	"Cute:": re.compile(r"^\s*Cute\s*:\s*", re.IGNORECASE),
+	"Minimal:": re.compile(r"^\s*Minimal\s*:\s*", re.IGNORECASE),
+	"Gen-Z:": re.compile(r"^\s*Gen\s*-\s*Z\s*:\s*", re.IGNORECASE),
+}
+
+
+def _strip_code_fences(text: str) -> str:
+	# Some models wrap output in ``` fences; remove them to simplify parsing.
+	text = text.strip()
+	if "```" not in text:
+		return text
+	# Remove opening fence line (``` or ```lang) and the closing fence.
+	text = re.sub(r"^```[a-zA-Z0-9_-]*\s*\n", "", text)
+	text = re.sub(r"\n```\s*$", "", text)
+	return text.strip()
+
+
+def normalize_caption_output(text: str) -> str:
+	"""Normalize model output to exactly 3 lines with required prefixes."""
+	text = _strip_code_fences(text)
+	raw_lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+	# Try to pick the labeled lines wherever they appear.
+	found: dict[str, str] = {}
+	for line in raw_lines:
+		for prefix in CAPTION_PREFIXES:
+			pattern = _PREFIX_PATTERNS[prefix]
+			if pattern.match(line):
+				content = pattern.sub("", line).strip()
+				found[prefix] = content
+				break
+
+	if len(found) == 3:
+		return "\n".join(f"{p} {found[p]}" for p in CAPTION_PREFIXES)
+
+	# Best-effort fallback: force 3 lines in order.
+	lines = (raw_lines + ["", "", ""])[:3]
+	normalized: list[str] = []
+	for prefix, line in zip(CAPTION_PREFIXES, lines, strict=False):
+		pattern = _PREFIX_PATTERNS[prefix]
+		if pattern.match(line):
+			line = f"{prefix} {pattern.sub('', line).strip()}"
+		else:
+			line = f"{prefix} {line.strip()}".rstrip()
+		normalized.append(line)
+	return "\n".join(normalized)
+
+
+def _price_token(price: str) -> str:
+	price = price.strip()
+	# If the user types just digits like "65", make a Thai-friendly token.
+	if re.fullmatch(r"\d+(?:\.\d+)?", price):
+		return f"{price} บาท"
+	return price
+
+
+def _price_digits(price: str) -> str | None:
+	match = re.search(r"\d+(?:\.\d+)?", price)
+	return match.group(0) if match else None
+
+
+def ensure_price_in_caption_output(text: str, price: str) -> str:
+	"""Ensure the price appears in the required lines (best-effort).
+
+	We require the price in Cute/Minimal (and keep Gen-Z consistent too).
+	"""
+	price = price.strip()
+	if not price:
+		return text
+	price_full = _price_token(price)
+	price_digits = _price_digits(price)
+
+	lines = [line.rstrip() for line in text.splitlines()]
+	if len(lines) != 3:
+		# Unexpected format; don't attempt invasive edits.
+		return text
+
+	def has_price(line: str) -> bool:
+		if price_full and price_full in line:
+			return True
+		if price_digits and price_digits in line:
+			return True
+		return False
+
+	updated: list[str] = []
+	for i, (prefix, line) in enumerate(zip(CAPTION_PREFIXES, lines, strict=False)):
+		# Ensure the line begins with the expected prefix.
+		content = line
+		pattern = _PREFIX_PATTERNS[prefix]
+		if pattern.match(content):
+			content = pattern.sub("", content).strip()
+		else:
+			# If the line doesn't have the right prefix, keep it as-is.
+			content = content.strip()
+
+		# Enforce price for Cute/Minimal; also do Gen-Z for consistency.
+		requires_price = i in (0, 1, 2)
+		new_line = f"{prefix} {content}".rstrip()
+		if requires_price and not has_price(new_line):
+			new_line = f"{new_line} {price_full}".rstrip()
+		updated.append(new_line)
+
+	return "\n".join(updated)
 
 def _get_api_key() -> str:
 	load_dotenv()
@@ -72,22 +184,19 @@ def _generate_with_google_generativeai(api_key: str, prompt: str) -> str:
 
 def build_caption_prompt(menu_name: str, price: str) -> str:
 	"""Build a Thai-friendly prompt for caption generation."""
-	return (
-		"คุณคือผู้ช่วยเขียนแคปชันสำหรับ Instagram ของร้าน MilkLab cafe\n"
-		"ช่วยเขียนแคปชันเป็นภาษาไทยแบบเป็นกันเอง อบอุ่น น่ารัก และอ่านง่าย\n"
-		"ตอบกลับมาเป็น 3 บรรทัดเท่านั้น และต้องขึ้นต้นด้วยคำว่า Cute:, Minimal:, Gen-Z: ตามลำดับ\n"
-		"โทนภาษาต้องเป็นกันเอง เหมือนคุยกับเพื่อน และให้สไตล์ใกล้เคียงตัวอย่างนี้\n\n"
-		"Cute: คืนนี้มีอะไรหวานๆ มาเสิร์ฟ ลาเต้น้ำผึ้งสูตรใหม่ 65 บาทเท่านั้น\n"
-		"Minimal: HONEY LATTE. 65 บาท. Tonight only.\n"
-		"Gen-Z: ลาเต้น้ำผึ้ง 65 บาท hits different ตอนตี 1 ลองเลยพี่\n\n"
-		f"ชื่อเมนู: {menu_name}\n"
-		f"ราคา: {price}\n\n"
-		"ข้อกำหนด:\n"
-		"- ใช้ภาษาไทยเป็นหลัก ยกเว้นบรรทัด Minimal ที่ใช้อังกฤษได้ตามตัวอย่าง\n"
-		"- แต่ละบรรทัดต้องสั้น กระชับ และมีจังหวะเหมือนแคปชันจริง\n"
-		"- อย่าใส่คำอธิบายเพิ่ม ไม่ต้องมีคำนำหรือปิดท้าย\n"
-		"- อย่าแยกเป็นข้อย่อยหรือใช้เลขนำหน้า"
-	)
+	# Token-saving prompt: keep instructions compact and mostly English.
+	# Output language/style requirements are still enforced.
+	lines: list[str] = [
+		"You write Instagram captions for MilkLab cafe.",
+		"OUTPUT EXACTLY 3 LINES, in this exact order and format:",
+		"Cute: <Thai, friendly/warm/cute>",
+		"Minimal: <short, minimal; English allowed>",
+		"Gen-Z: <Thai Gen-Z vibe>",
+		"Rules: include the price in EVERY line; no extra text; no bullets/numbering.",
+		f"Menu: {menu_name}",
+		f"Price: {price}",
+	]
+	return "\n".join(lines)
 
 def generate_captions(menu_name: str, price: str) -> str:
 	"""Generate three Thai caption variants for the given menu item."""
@@ -97,7 +206,9 @@ def generate_captions(menu_name: str, price: str) -> str:
 		last_rate_limit_error: RuntimeError | None = None
 		for model_name in MODEL_CANDIDATES:
 			try:
-				return _generate_with_google_genai(api_key, prompt, model_name)
+				text = _generate_with_google_genai(api_key, prompt, model_name)
+				normalized = normalize_caption_output(text)
+				return ensure_price_in_caption_output(normalized, price)
 			except RuntimeError as e:
 				# Only auto-fallback for rate limit / quota issues.
 				if _is_rate_limit_or_quota_error(str(e)):
@@ -113,7 +224,9 @@ def generate_captions(menu_name: str, price: str) -> str:
 		raise
 	except ImportError:
 		# Backwards-compatible fallback for environments that still have the old SDK.
-		return _generate_with_google_generativeai(api_key, prompt)
+		text = _generate_with_google_generativeai(api_key, prompt)
+		normalized = normalize_caption_output(text)
+		return ensure_price_in_caption_output(normalized, price)
 
 if __name__ == "__main__":
 	menu_name = input("กรอกชื่อเมนู: ").strip()
