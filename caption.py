@@ -16,6 +16,8 @@ CAPTION_PREFIXES: tuple[str, ...] = (
 	"Gen-Z:",
 )
 
+CAPTION_EMOJI = "🥛"
+
 _PREFIX_PATTERNS: dict[str, re.Pattern[str]] = {
 	"Cute:": re.compile(r"^\s*Cute\s*:\s*", re.IGNORECASE),
 	"Minimal:": re.compile(r"^\s*Minimal\s*:\s*", re.IGNORECASE),
@@ -117,6 +119,8 @@ def ensure_price_in_caption_output(text: str, price: str) -> str:
 		new_line = f"{prefix} {content}".rstrip()
 		if requires_price and not has_price(new_line):
 			new_line = f"{new_line} {price_full}".rstrip()
+		if CAPTION_EMOJI not in new_line:
+			new_line = f"{new_line} {CAPTION_EMOJI}".rstrip()
 		updated.append(new_line)
 
 	return "\n".join(updated)
@@ -192,7 +196,7 @@ def build_caption_prompt(menu_name: str, price: str) -> str:
 		"Cute: <Thai, friendly/warm/cute>",
 		"Minimal: <short, minimal; English allowed>",
 		"Gen-Z: <Thai Gen-Z vibe>",
-		"Rules: include the price in EVERY line; no extra text; no bullets/numbering.",
+		"Rules: include the price in EVERY line; add at least one emoji in EVERY line; no extra text; no bullets/numbering.",
 		f"Menu: {menu_name}",
 		f"Price: {price}",
 	]
