@@ -3,6 +3,8 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+agent_trace.log
+
 # C extensions
 *.so
 
