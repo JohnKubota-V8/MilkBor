@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import { LayoutDashboard, ShoppingBag, Package, BarChart3, Settings, LogOut, ChevronRight, Menu } from "lucide-react";
 import { useState } from "react";
-import { useApp } from "../context/AppContext";
+import { createClient } from "@/utils/supabase/client";
 import { AIChatPopup } from "./AIChatPopup";
 
 const navItems = [
@@ -12,6 +12,7 @@ const navItems = [
   { path: "/admin/orders", label: "ออเดอร์", icon: ShoppingBag },
   { path: "/admin/menu", label: "จัดการสินค้า", icon: Package },
   { path: "/admin/reports", label: "รายงาน", icon: BarChart3 },
+  { path: "/admin/todos", label: "Todos", icon: BarChart3 },
   { path: "/admin/settings", label: "ตั้งค่า", icon: Settings },
 ];
 
@@ -77,14 +78,14 @@ function AdminSidebar({
 }
 
 export function AdminLayout({ children }: { children: React.ReactNode }) {
-  const { user, logout } = useApp();
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const supabase = createClient();
 
   const handleLogout = () => {
-    logout();
-    router.push("/login");
+    supabase.auth.signOut();
+    router.push("/admin/login");
   };
 
   return (
@@ -92,7 +93,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
       <div className="hidden md:flex sticky top-0 h-screen">
         <AdminSidebar
           pathname={pathname}
-          userName={user?.name}
+          userName="Admin"
           onLogout={handleLogout}
           onNavigate={() => setSidebarOpen(false)}
         />
@@ -103,7 +104,7 @@ export function AdminLayout({ children }: { children: React.ReactNode }) {
           <div className="w-56">
             <AdminSidebar
               pathname={pathname}
-              userName={user?.name}
+              userName="Admin"
               onLogout={handleLogout}
               onNavigate={() => setSidebarOpen(false)}
             />

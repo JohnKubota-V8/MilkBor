@@ -133,7 +133,7 @@ export function Login() {
 
             {tab === "login" && (
               <p className="text-xs" style={{ color: "#9ca3af" }}>
-                Admin: admin@everyday-pairs.com / admin123
+                Admin: admin@admin.com / admin
               </p>
             )}
 
